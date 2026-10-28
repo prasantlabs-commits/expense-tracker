@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a73e8">
+<title>Expense Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  [hidden]{display:none!important}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f6fa;color:#1d2433}
+  header{background:#1a73e8;color:#fff;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:0;z-index:5}
+  header h1{font-size:1.2rem;margin:0}
+  .sub{font-size:.75rem;opacity:.9;margin-top:2px}
+  .hbtn{width:auto;background:#fff;color:#1a73e8;border:0;font-weight:600;white-space:nowrap}
+  main{max-width:720px;margin:auto;padding:12px;display:grid;gap:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .label{font-size:.8rem;color:#667085}
+  .big{font-size:1.5rem;font-weight:700}
+  button,select,input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #ccd3e0;width:100%;background:#fff}
+  button{cursor:pointer}
+  #monthPicker{width:auto;margin-bottom:12px}
+  .upload{display:block;text-align:center;background:#1a73e8;color:#fff;padding:16px;border-radius:14px;font-weight:600;cursor:pointer}
+  .upload input{display:none}
+  .hint{font-size:.8rem;color:#667085;margin-top:8px;text-align:center}
+  .busy{margin-top:10px;color:#1a73e8;font-weight:600;text-align:center}
+  .chart{position:relative;height:240px}
+  ul{list-style:none;padding:0;margin:0}
+  li{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #eef1f6}
+  li img{width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0}
+  li .info{flex:1;min-width:0;cursor:pointer}
+  li .info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  li .info small{color:#667085}
+  li select{width:auto;padding:6px}
+  li .amt{font-weight:600;white-space:nowrap;cursor:pointer}
+  button.ghost{width:auto;border:0;background:none;color:#d93025;font-size:1.1rem;padding:4px}
+  .warn{background:#fbbc04;color:#1d2433;font-size:.7rem;padding:1px 6px;border-radius:6px;margin-left:4px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>💷 Expense Tracker</h1>
+    <div class="sub" id="status">Starting…</div>
+  </div>
+  <button id="driveBtn" class="hbtn">Connect Drive</button>
+</header>
+
+<main>
+  <div class="card">
+    <input type="month" id="monthPicker">
+    <div class="cards">
+      <div><div class="label">Total spent</div><div class="big" id="total">£0.00</div><div class="label" id="count"></div></div>
+      <div><div class="label">Biggest category</div><div class="big" id="topCat">–</div><div class="label" id="topCatAmt"></div></div>
+      <div style="grid-column:span 2"><div class="label">Where you spend most</div><div class="big" id="topPlace">–</div><div class="label" id="topPlaceAmt"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="upload">📷 Scan receipt
+      <input type="file" id="fileIn" accept="image/*" multiple>
+    </label>
+    <div class="hint">Long receipt? Photograph each part, then select all the parts together, top to bottom.</div>
+    <div class="busy" id="busy" hidden></div>
+  </div>
+
+  <div class="card"><div class="chart"><canvas id="catChart"></canvas></div></div>
+  <div class="card"><div class="chart"><canvas id="placeChart"></canvas></div></div>
+
+  <div class="card">
+    <strong>Recent expenses</strong>
+    <div class="label" style="margin-top:2px">Tap a shop name or amount to edit it.</div>
+    <ul id="list" style="margin-top:8px"></ul>
+  </div>
+</main>
+
+<script>
+/* ===== CONFIG ===== */
+const CLIENT_ID = '1082499645160-sqis1spcfbfmr5k3gpjh5tm47rucjoag.apps.googleusercontent.com';
+const CUR = '€';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const FOLDER_NAME = 'Expense Receipts';
+const DATA_FILE = 'expenses.json';
+const SCAN_WIDTH = 1600;   // width of the cleaned receipt scan
+const SCAN_MAX_H = 6000;   // tallest a single scan can be
+
+const CATEGORIES = {
+  Food: ['restaurant','cafe','coffee','pizza','burger','grocer','supermarket','tesco','lidl','aldi','sainsbury','morrisons','mcdonald','starbucks','greggs','bakery','kitchen','asda','waitrose','co-op'],
+  Transport: ['uber','bolt','taxi','train','rail','fuel','petrol','shell','bp','esso','parking','metro','bus','tfl'],
+  Shopping: ['amazon','store','mall','clothing','zara','h&m','primark','ikea','argos','boots','next'],
+  Bills: ['electric','water','gas','internet','broadband','mobile','insurance','council','rent','vodafone','ee '],
+  Health: ['pharmacy','chemist','clinic','doctor','dental','gym','optician','superdrug'],
+  Entertainment: ['cinema','netflix','spotify','steam','theatre','concert','cineworld'],
+  Other: []
+};
+const CAT_NAMES = Object.keys(CATEGORIES);
+const COLORS = ['#1a73e8','#34a853','#fbbc04','#ea4335','#a142f4','#24c1e0','#ff6d01','#9aa0a6'];
+const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const today = new Date().toLocaleDateString('en-CA');
+
+let expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+let pendingFiles = [];      // receipt scans waiting to be uploaded to Drive
+let cloud = null;           // { token, folder, file } once connected
+let tokenClient = null;
+let tokenWait = null;       // shared promise while a token is being requested
+let catChart, placeChart;
+
+/* ---------- Status and local cache ---------- */
+function setStatus(msg) { $('status').textContent = msg; }
+function setBusy(msg) { $('busy').textContent = msg; $('busy').hidden = !msg; }
+function setDriveUI(connected) { $('driveBtn').textContent = connected ? 'Drive ✓' : 'Connect Drive'; }
+function saveLocal() {
+  try { localStorage.setItem('expenses', JSON.stringify(expenses)); }
+  catch { setStatus('Phone storage is full. Connect Drive to keep your data safe.'); }
+}
+
+/* ---------- Google sign-in (token is kept in the browser) ---------- */
+function savedToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem('gtoken') || 'null');
+    if (t && t.exp > Date.now()) return t.token;
+  } catch {}
+  return null;
+}
+function initGoogle() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    callback: r => {
+      const w = tokenWait; tokenWait = null;
+      if (r.error) { w?.reject(r.error); setDriveUI(false); return; }
+      const lifetime = (Number(r.expires_in) || 3600) * 1000;
+      localStorage.setItem('gtoken', JSON.stringify({ token: r.access_token, exp: Date.now() + lifetime - 60000 }));
+      localStorage.setItem('connected', '1');
+      setDriveUI(true);
+      w?.resolve(r.access_token);
+    },
+    error_callback: err => {
+      const w = tokenWait; tokenWait = null;
+      w?.reject(err.type || 'error');
+      setDriveUI(false);
+    }
+  });
+  start();
+}
+function getToken(interactive) {
+  const saved = savedToken();
+  if (saved) return Promise.resolve(saved);
+  if (!tokenClient) return Promise.reject('Google sign-in is still loading');
+  if (tokenWait) return tokenWait.promise;
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  tokenWait = { promise, resolve, reject };
+  // prompt 'none' = silent reconnect; '' = may show the Google popup (needs a tap)
+  tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
+  return promise;
+}
+
+/* ---------- Google Drive ---------- */
+async function drive(url, token, opts = {}) {
+  const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error('Drive error ' + r.status);
+  return r;
+}
+async function ensureCloud(interactive) {
+  const token = await getToken(interactive);
+  if (cloud && cloud.token === token) return cloud;
+
+  let folder = localStorage.getItem('folderId');
+  if (!folder) {
+    const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const found = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, token)).json();
+    folder = found.files?.[0]?.id;
+    if (!folder) {
+      const created = await drive('https://www.googleapis.com/drive/v3/files?fields=id', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      folder = (await created.json()).id;
+    }
+    localStorage.setItem('folderId', folder);
+  }
+
+  const q2 = encodeURIComponent(`name='${DATA_FILE}' and '${folder}' in parents and trashed=false`);
+  const f = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q2}&fields=files(id)`, token)).json();
+  cloud = { token, folder, file: f.files?.[0]?.id || null };
+  return cloud;
+}
+async function pullFromDrive() {
+  const c = await ensureCloud(false);
+  if (!c.file) {
+    if (expenses.length) await pushToDrive();
+    return;
+  }
+  const data = await (await drive(`https://www.googleapis.com/drive/v3/files/${c.file}?alt=media`, c.token)).json();
+  expenses = Array.isArray(data) ? data : [];
+  saveLocal();
+}
+async function pushToDrive() {
+  const c = await ensureCloud(false);
+  const body = new Blob([JSON.stringify(expenses)], { type: 'application/json' });
+  if (c.file) {
+    await drive(`https://www.googleapis.com/upload/drive/v3/files/${c.file}?uploadType=media`, c.token, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: DATA_FILE, parents: [c.folder] })], { type: 'application/json' }));
+    form.append('file', body);
+    const created = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', c.token, { method: 'POST', body: form });
+    c.file = (await created.json()).id;
+  }
+}
+async function uploadReceipt(p) {
+  const c = await ensureCloud(false);
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ name: p.name, parents: [c.folder] })], { type: 'application/json' }));
+  form.append('file', p.file);
+  const r = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', c.token, { method: 'POST', body: form });
+  return (await r.json()).id;
+}
+async function flushPending() {
+  if (!pendingFiles.length) return;
+  let changed = false;
+  for (const p of [...pendingFiles]) {
+    try {
+      const id = await uploadReceipt(p);
+      const e = expenses.find(x => x.id === p.entryId);
+      if (e) e.driveId = id;
+      pendingFiles = pendingFiles.filter(x => x !== p);
+      changed = true;
+    } catch { break; }
+  }
+  if (changed) await save();
+}
+async function save() {
+  saveLocal();
+  render();
+  if (!localStorage.getItem('connected')) return setStatus('Saved on this phone. Connect Drive to sync.');
+  try {
+    await pushToDrive();
+    setStatus('Synced with Google Drive ✓');
+  } catch {
+    setStatus('Saved on this phone. Will sync when Drive reconnects.');
+  }
+}
+async function start() {
+  render();
+  if (!localStorage.getItem('connected')) return setStatus('Connect Drive to sync across your devices.');
+  setDriveUI(!!savedToken());
+  setStatus('Syncing with Google Drive…');
+  try {
+    await pullFromDrive();
+    await flushPending();
+    setDriveUI(true);
+    setStatus('Synced with Google Drive ✓');
+    render();
+  } catch {
+    setDriveUI(false);
+    setStatus('Tap Connect Drive to sync.');
+  }
+}
+$('driveBtn').onclick = async () => {
+  setStatus('Connecting to Google Drive…');
+  try {
+    await getToken(true);
+    localStorage.setItem('connected', '1');
+    await pullFromDrive();
+    await flushPending();
+    setDriveUI(true);
+    setStatus('Synced with Google Drive ✓');
+    render();
+  } catch {
+    setStatus('Could not connect to Google Drive. Try again.');
+  }
+};
+const gsiWait = setInterval(() => {
+  if (window.google?.accounts) { clearInterval(gsiWait); initGoogle(); }
+}, 300);
+
+/* ---------- Scanner: find the page, straighten it, make it black and white ---------- */
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function drawScaled(src, maxSide) {
+  const s = maxSide / Math.max(src.width, src.height);
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.width * s);
+  c.height = Math.round(src.height * s);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+// Otsu: finds the brightness level that best separates paper from background
+function otsu(gray) {
+  const h = new Array(256).fill(0);
+  for (const v of gray) h[v]++;
+  const n = gray.length;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * h[i];
+  let sumB = 0, wB = 0, best = 0, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += h[t];
+    if (!wB) continue;
+    const wF = n - wB;
+    if (!wF) break;
+    sumB += t * h[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) ** 2;
+    if (between > best) { best = between; thr = t; }
+  }
+  return thr;
+}
+// Finds the four corners of the bright paper. Returns null if it can't see a clear page.
+function detectQuad(img) {
+  const s = 600 / Math.max(img.width, img.height);
+  const w = Math.round(img.width * s), h = Math.round(img.height * s);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const gray = new Uint8Array(w * h);
+  for (let i = 0, p = 0; i < gray.length; i++, p += 4) gray[i] = d[p] * 0.3 + d[p + 1] * 0.59 + d[p + 2] * 0.11;
+
+  const t = otsu(gray);
+  let tl = null, tr = null, br = null, bl = null, count = 0;
+  let minSum = Infinity, maxSum = -Infinity, minDiff = Infinity, maxDiff = -Infinity;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (gray[y * w + x] <= t) continue;
+      count++;
+      const sum = x + y, diff = x - y;
+      if (sum < minSum) { minSum = sum; tl = [x, y]; }
+      if (sum > maxSum) { maxSum = sum; br = [x, y]; }
+      if (diff > maxDiff) { maxDiff = diff; tr = [x, y]; }
+      if (diff < minDiff) { minDiff = diff; bl = [x, y]; }
+    }
+  }
+  const share = count / (w * h);
+  if (share < 0.2 || share > 0.97 || !tl || !tr || !br || !bl) return null;
+  return [tl, tr, br, bl].map(([x, y]) => [x / s, y / s]);
+}
+// Solves the 8x8 linear system used to map one quadrilateral onto another
+function solve8(A, b) {
+  const n = 8;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+// Returns the transform from flat output pixels back to positions on the photo
+function homography(srcPts, dstPts) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = dstPts[i], [u, v] = srcPts[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
+  }
+  return solve8(A, b);
+}
+// Makes the page clean and black and white, handling shadows and uneven light
+function binarize(g, W, H) {
+  const I = new Uint32Array((W + 1) * (H + 1));
+  for (let y = 0; y < H; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < W; x++) {
+      rowSum += g[y * W + x];
+      I[(y + 1) * (W + 1) + x + 1] = I[y * (W + 1) + x + 1] + rowSum;
+    }
+  }
+  const r = Math.max(8, Math.round(W / 60));
+  const out = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    const y1 = Math.max(0, y - r), y2 = Math.min(H - 1, y + r);
+    for (let x = 0; x < W; x++) {
+      const x1 = Math.max(0, x - r), x2 = Math.min(W - 1, x + r);
+      const sum = I[(y2 + 1) * (W + 1) + x2 + 1] - I[y1 * (W + 1) + x2 + 1] - I[(y2 + 1) * (W + 1) + x1] + I[y1 * (W + 1) + x1];
+      const mean = sum / ((x2 - x1 + 1) * (y2 - y1 + 1));
+      out[y * W + x] = g[y * W + x] < mean - 12 ? 0 : 255;
+    }
+  }
+  return out;
+}
+// Straightens the page (or the whole photo if no page was found) and returns a clean scan
+function scanPage(file) {
+  return loadImage(file).then(img => {
+    const quad = detectQuad(img) || [[0, 0], [img.width, 0], [img.width, img.height], [0, img.height]];
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const natW = Math.max(dist(quad[0], quad[1]), dist(quad[3], quad[2]));
+    const natH = Math.max(dist(quad[0], quad[3]), dist(quad[1], quad[2]));
+    if (natW < 50 || natH < 50) throw new Error('Bad crop');
+
+    let W = SCAN_WIDTH, H = Math.round(natH * W / natW);
+    if (H > SCAN_MAX_H) { W = Math.round(W * SCAN_MAX_H / H); H = SCAN_MAX_H; }
+
+    const src = document.createElement('canvas');
+    src.width = img.width; src.height = img.height;
+    const sctx = src.getContext('2d');
+    sctx.drawImage(img, 0, 0);
+    const sd = sctx.getImageData(0, 0, src.width, src.height).data;
+
+    const m = homography(quad, [[0, 0], [W, 0], [W, H], [0, H]]);
+    const g = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const den = m[6] * x + m[7] * y + 1;
+        const u = Math.min(src.width - 1, Math.max(0, Math.round((m[0] * x + m[1] * y + m[2]) / den)));
+        const v = Math.min(src.height - 1, Math.max(0, Math.round((m[3] * x + m[4] * y + m[5]) / den)));
+        const p = (v * src.width + u) * 4;
+        g[y * W + x] = sd[p] * 0.3 + sd[p + 1] * 0.59 + sd[p + 2] * 0.11;
+      }
+    }
+    const bw = binarize(g, W, H);
+
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const id = ctx.createImageData(W, H);
+    for (let i = 0, p = 0; i < bw.length; i++, p += 4) {
+      id.data[p] = id.data[p + 1] = id.data[p + 2] = bw[i];
+      id.data[p + 3] = 255;
+    }
+    ctx.putImageData(id, 0, 0);
+    return c;
+  });
+}
+// Joins several parts of a long receipt into one tall scan, top to bottom
+function stackParts(parts) {
+  const H = parts.reduce((s, c) => s + c.height, 0);
+  const out = document.createElement('canvas');
+  out.width = SCAN_WIDTH; out.height = H;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  let y = 0;
+  for (const c of parts) { ctx.drawImage(c, 0, y, SCAN_WIDTH, c.height); y += c.height; }
+  return out;
+}
+
+/* ---------- Reading the receipt text ---------- */
+function parseNumber(s) {
+  const v = s.replace(/\s/g, '');
+  const dec = v.slice(-3);
+  const whole = v.slice(0, -3).replace(/[.,]/g, '');
+  return parseFloat(whole + '.' + dec.slice(1));
+}
+function parseReceipt(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+
+  // Shop name: first line with real words that is not a header such as "receipt" or a phone number
+  const placeLine = lines.find(l => /[a-z]{3,}/i.test(l) && !/receipt|invoice|tel|vat|www|date|time|\d{5,}/i.test(l)) || '';
+  const place = placeLine.replace(/[^\w &'.-]/g, '').trim().slice(0, 40) || 'Unknown shop';
+
+  // Date: prefers yyyy-mm-dd, then dd/mm/yyyy (UK), then "28 Oct 2026"
+  let date = today, m;
+  if ((m = text.match(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/))) {
+    date = `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  } else if ((m = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    date = `${y}-${pad(m[2])}-${pad(m[1])}`;
+  } else if ((m = text.match(/\b(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s+(\d{4})\b/i)) && MONTHS[m[2].toLowerCase()]) {
+    date = `${m[3]}-${pad(MONTHS[m[2].toLowerCase()])}-${pad(m[1])}`;
+  }
+
+  // Amount: prefer the last line that says total / amount due / to pay
+  const amountOf = l => {
+    const all = [...l.matchAll(/\d{1,4}(?:[.,]\d{3})*[.,]\d{2}\b/g)].map(x => parseNumber(x[0]));
+    return all.length ? all[all.length - 1] : NaN;
+  };
+  const totalLines = lines.filter(l =>
+    /total|amount due|to pay|balance/i.test(l) && !/sub\s*-?total|change|tax|vat|savings?/i.test(l)
+  );
+  let amount = NaN;
+  for (const l of [...totalLines].reverse()) {
+    const v = amountOf(l);
+    if (!isNaN(v)) { amount = v; break; }
+  }
+  if (isNaN(amount)) {
+    const all = lines.map(amountOf).filter(v => !isNaN(v));
+    amount = all.length ? Math.max(...all) : 0;
+  }
+  return { place, date, amount };
+}
+function guessCategory(name) {
+  const n = name.toLowerCase();
+  for (const [cat, words] of Object.entries(CATEGORIES))
+    if (words.some(w => n.includes(w))) return cat;
+  return 'Other';
+}
+
+/* ---------- Adding a receipt: fully automatic ---------- */
+$('fileIn').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+
+  let canvas = null, text = '', blob = null;
+  try {
+    const parts = [];
+    for (let i = 0; i < files.length; i++) {
+      setBusy(files.length > 1 ? `Scanning part ${i + 1} of ${files.length}…` : 'Scanning receipt…');
+      parts.push(await scanPage(files[i]));
+    }
+    canvas = stackParts(parts);
+    setBusy('Reading receipt…');
+    text = (await Tesseract.recognize(canvas, 'eng')).data.text;
+    blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+  } catch {
+    // If scanning fails, the original photo is still kept so you can check it later
+  }
+  if (!blob) blob = files[0];
+  const thumb = canvas ? drawScaled(canvas, 300).toDataURL('image/jpeg', 0.6) : '';
+
+  const r = parseReceipt(text);
+  const id = Date.now().toString();
+  expenses.push({
+    id,
+    place: r.place,
+    date: r.date,
+    amount: r.amount,
+    category: guessCategory(r.place),
+    thumb,
+    needsReview: !text || !r.amount
+  });
+  pendingFiles.push({ entryId: id, file: blob, name: `${r.date}_${r.place.replace(/[\\/]/g, '-')}.jpg` });
+
+  setBusy('');
+  await save();
+  await flushPending();
+});
+
+/* ---------- Editing ---------- */
+function editEntry(id) {
+  const e = expenses.find(x => x.id === id);
+  if (!e) return;
+  const place = prompt('Shop name', e.place);
+  if (place === null) return;
+  const amt = prompt(`Amount (${CUR})`, e.amount);
+  if (amt === null) return;
+  e.place = place.trim() || e.place;
+  const v = parseFloat(String(amt).replace(',', '.'));
+  if (!isNaN(v)) e.amount = v;
+  e.category = guessCategory(e.place);
+  e.needsReview = false;
+  save();
+}
+
+/* ---------- Dashboard ---------- */
+function groupSum(arr, keyFn) {
+  const m = {};
+  arr.forEach(e => { const k = keyFn(e); m[k] = (m[k] || 0) + e.amount; });
+  return m;
+}
+function render() {
+  const month = $('monthPicker').value;
+  const list = expenses.filter(e => e.date.startsWith(month));
+  const total = list.reduce((s, e) => s + e.amount, 0);
+  $('total').textContent = CUR + total.toFixed(2);
+  $('count').textContent = list.length + ' receipts';
+
+  const byCat = groupSum(list, e => e.category);
+  const byPlace = groupSum(list, e => e.place);
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const places = Object.entries(byPlace).sort((a, b) => b[1] - a[1]);
+
+  if (cats.length) {
+    $('topCat').textContent = cats[0][0];
+    $('topCatAmt').textContent = `${CUR}${cats[0][1].toFixed(2)} (${Math.round(cats[0][1] / total * 100)}%)`;
+  } else { $('topCat').textContent = '–'; $('topCatAmt').textContent = ''; }
+
+  if (places.length) {
+    $('topPlace').textContent = places[0][0];
+    const visits = list.filter(e => e.place === places[0][0]).length;
+    $('topPlaceAmt').textContent = `${CUR}${places[0][1].toFixed(2)} across ${visits} visit${visits > 1 ? 's' : ''}`;
+  } else { $('topPlace').textContent = '–'; $('topPlaceAmt').textContent = ''; }
+
+  catChart?.destroy();
+  catChart = new Chart($('catChart'), {
+    type: 'doughnut',
+    data: { labels: cats.map(c => c[0]), datasets: [{ data: cats.map(c => c[1]), backgroundColor: COLORS }] },
+    options: { maintainAspectRatio: false, plugins: { title: { display: true, text: 'Spending by category' }, legend: { position: 'bottom' } } }
+  });
+  placeChart?.destroy();
+  placeChart = new Chart($('placeChart'), {
+    type: 'bar',
+    data: { labels: places.slice(0, 5).map(p => p[0]), datasets: [{ label: 'Spent', data: places.slice(0, 5).map(p => p[1]), backgroundColor: '#1a73e8' }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { title: { display: true, text: 'Top places' }, legend: { display: false } } }
+  });
+
+  const recent = [...expenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
+  $('list').innerHTML = recent.map(e => `
+    <li>
+      ${e.thumb ? `<img src="${e.thumb}" alt="">` : '<div style="width:44px"></div>'}
+      <div class="info" data-edit="${e.id}">
+        <strong>${esc(e.place)}${e.needsReview ? '<span class="warn">check</span>' : ''}</strong>
+        <small>${e.date}</small>
+      </div>
+      <select data-cat="${e.id}">${CAT_NAMES.map(c => `<option ${c === e.category ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <span class="amt" data-edit="${e.id}">${CUR}${e.amount.toFixed(2)}</span>
+      <button class="ghost" data-del="${e.id}" aria-label="Delete">✕</button>
+    </li>`).join('') || '<li><small>No expenses yet. Scan a receipt to add one.</small></li>';
+}
+$('list').addEventListener('change', e => {
+  const id = e.target.dataset.cat;
+  if (!id) return;
+  const item = expenses.find(x => x.id === id);
+  if (item) { item.category = e.target.value; save(); }
+});
+$('list').addEventListener('click', e => {
+  const editId = e.target.closest('[data-edit]')?.dataset.edit;
+  if (editId) return editEntry(editId);
+  const delId = e.target.dataset.del;
+  if (delId && confirm('Remove this expense from the app? The receipt scan stays in your Drive folder.')) {
+    expenses = expenses.filter(x => x.id !== delId);
+    save();
+  }
+});
+
+$('monthPicker').value = today.slice(0, 7);
+$('monthPicker').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
