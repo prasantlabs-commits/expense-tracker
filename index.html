@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a73e8">
+<title>Expense Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  [hidden]{display:none!important}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f6fa;color:#1d2433}
+  header{background:#1a73e8;color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 14px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5}
+  header h1{font-size:1.2rem;margin:0}
+  main{max-width:720px;margin:auto;padding:12px;display:grid;gap:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .label{font-size:.8rem;color:#667085}
+  .big{font-size:1.5rem;font-weight:700}
+  button,select,input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #ccd3e0;width:100%;background:#fff}
+  button{cursor:pointer}
+  button.primary{background:#1a73e8;color:#fff;border:0;font-weight:600}
+  button.ghost{width:auto;border:0;background:none;color:#d93025;font-size:1.1rem;padding:4px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .upload{display:block;text-align:center;background:#1a73e8;color:#fff;padding:16px;border-radius:14px;font-weight:600;cursor:pointer}
+  .upload input{display:none}
+  img.preview{width:100%;border-radius:10px;max-height:220px;object-fit:contain;margin-bottom:8px}
+  .status{font-size:.85rem;color:#667085;margin:8px 0 0}
+  .chart{position:relative;height:240px}
+  ul{list-style:none;padding:0;margin:0}
+  li{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #eef1f6}
+  li img{width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0}
+  li .info{flex:1;min-width:0}
+  li .info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  li .info small{color:#667085}
+  li select{width:auto;padding:6px}
+  li .amt{font-weight:600;white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>💷 Expense Tracker</h1>
+  <button id="driveBtn" style="width:auto;background:#fff;color:#1a73e8;border:0;font-weight:600">Connect Drive</button>
+</header>
+
+<main>
+  <div class="card">
+    <input type="month" id="monthPicker" style="width:auto;margin-bottom:12px">
+    <div class="cards">
+      <div><div class="label">Total spent</div><div class="big" id="total">£0.00</div><div class="label" id="count"></div></div>
+      <div><div class="label">Biggest category</div><div class="big" id="topCat">–</div><div class="label" id="topCatAmt"></div></div>
+      <div style="grid-column:span 2"><div class="label">Where you spend most</div><div class="big" id="topPlace">–</div><div class="label" id="topPlaceAmt"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="upload">📷 Add receipt photo
+      <input type="file" id="fileIn" accept="image/*" capture="environment">
+    </label>
+    <div id="formWrap" hidden style="margin-top:12px">
+      <img id="preview" class="preview" alt="Receipt" hidden>
+      <input id="place" placeholder="Shop / place">
+      <div class="row">
+        <input id="date" type="date">
+        <input id="amount" type="number" step="0.01" placeholder="Amount">
+      </div>
+      <select id="category" style="margin-top:8px"></select>
+      <button id="saveBtn" class="primary" style="margin-top:10px">Save expense</button>
+      <p class="status" id="status"></p>
+    </div>
+  </div>
+
+  <div class="card"><div class="chart"><canvas id="catChart"></canvas></div></div>
+  <div class="card"><div class="chart"><canvas id="placeChart"></canvas></div></div>
+
+  <div class="card">
+    <strong>Recent expenses</strong>
+    <ul id="list" style="margin-top:8px"></ul>
+  </div>
+</main>
+
+<script>
+/* ===== CONFIG: paste your OAuth Client ID from Google Cloud ===== */
+const CLIENT_ID = '1082499645160-sqis1spcfbfmr5k3gpjh5tm47rucjoag.apps.googleusercontent.com';
+const CUR = '€';   // change to your currency symbol
+
+const CATEGORIES = {
+  Food: ['restaurant','cafe','coffee','pizza','burger','grocer','supermarket','tesco','lidl','aldi','sainsbury','morrisons','mcdonald','starbucks','greggs','bakery','kitchen'],
+  Transport: ['uber','bolt','taxi','train','rail','fuel','petrol','shell','bp','esso','parking','metro','bus'],
+  Shopping: ['amazon','store','mall','clothing','zara','h&m','primark','ikea','argos','boots'],
+  Bills: ['electric','water','gas','internet','broadband','mobile','insurance','council','rent'],
+  Health: ['pharmacy','chemist','clinic','doctor','dental','gym','optician'],
+  Entertainment: ['cinema','netflix','spotify','steam','theatre','concert','cineworld'],
+  Other: []
+};
+const CAT_NAMES = Object.keys(CATEGORIES);
+const COLORS = ['#1a73e8','#34a853','#fbbc04','#ea4335','#a142f4','#24c1e0','#ff6d01','#9aa0a6'];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today = new Date().toLocaleDateString('en-CA');
+
+let expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+let pending = null;            // {file, thumb} for the receipt being added
+let accessToken = null, tokenClient = null, pendingAuth = null;
+let folderId = localStorage.getItem('folderId');
+let catChart, placeChart;
+
+/* ---------- Helpers ---------- */
+function persist() {
+  try { localStorage.setItem('expenses', JSON.stringify(expenses)); }
+  catch { alert('Phone storage is full. Receipts are still in Google Drive if connected.'); }
+}
+function guessCategory(name) {
+  const n = name.toLowerCase();
+  for (const [cat, words] of Object.entries(CATEGORIES))
+    if (words.some(w => n.includes(w))) return cat;
+  return 'Other';
+}
+function resizeImage(file, maxSize, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = img.width * s; c.height = img.height * s;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function parseReceipt(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const place = lines[0] || '';
+  let date = today;
+  const d = text.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if (d) date = `${d[3].length === 2 ? '20' + d[3] : d[3]}-${d[2].padStart(2,'0')}-${d[1].padStart(2,'0')}`;
+  const totalLine = lines.find(l => /total/i.test(l) && !/sub/i.test(l) && /\d+[.,]\d{2}/.test(l));
+  const nums = [...(totalLine || text).matchAll(/(\d+[.,]\d{2})/g)].map(m => parseFloat(m[1].replace(',', '.')));
+  return { place, date, amount: nums.length ? Math.max(...nums) : '' };
+}
+function setStatus(msg) { $('status').textContent = msg; }
+
+/* ---------- Google Drive ---------- */
+function initGoogle() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: r => {
+      if (r.error) { pendingAuth?.reject(r.error); }
+      else { accessToken = r.access_token; $('driveBtn').textContent = 'Drive ✓'; pendingAuth?.resolve(accessToken); }
+      pendingAuth = null;
+    }
+  });
+}
+function getToken() {
+  return new Promise((resolve, reject) => {
+    if (accessToken) return resolve(accessToken);
+    pendingAuth = { resolve, reject };
+    tokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+async function getFolder(token) {
+  if (folderId) return folderId;
+  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Expense Receipts', mimeType: 'application/vnd.google-apps.folder' })
+  });
+  folderId = (await r.json()).id;
+  localStorage.setItem('folderId', folderId);
+  return folderId;
+}
+async function uploadToDrive(file, name) {
+  const token = await getToken();
+  const folder = await getFolder(token);
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ name, parents: [folder] })], { type: 'application/json' }));
+  form.append('file', file);
+  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form
+  });
+  return (await r.json()).id;
+}
+$('driveBtn').onclick = () => getToken().catch(() => alert('Could not connect to Google Drive.'));
+const gsiWait = setInterval(() => { if (window.google?.accounts) { clearInterval(gsiWait); initGoogle(); } }, 300);
+
+/* ---------- Adding a receipt ---------- */
+$('category').innerHTML = CAT_NAMES.map(c => `<option>${c}</option>`).join('');
+$('date').value = today;
+$('monthPicker').value = today.slice(0, 7);
+
+$('fileIn').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $('formWrap').hidden = false;
+  pending = { file, thumb: await resizeImage(file, 300, 0.6) };
+  $('preview').src = pending.thumb; $('preview').hidden = false;
+  setStatus('Reading receipt…');
+  try {
+    const { data } = await Tesseract.recognize(file, 'eng');
+    const r = parseReceipt(data.text);
+    $('place').value = r.place; $('date').value = r.date; $('amount').value = r.amount;
+    $('category').value = guessCategory(r.place);
+    setStatus('Check the details, then save.');
+  } catch {
+    setStatus('Could not read the receipt. Fill in the details manually.');
+  }
+});
+
+$('saveBtn').onclick = async () => {
+  const amount = parseFloat($('amount').value);
+  if (!amount) return setStatus('Enter an amount first.');
+  const entry = {
+    id: Date.now().toString(),
+    place: $('place').value.trim() || 'Unknown',
+    date: $('date').value || today,
+    amount,
+    category: $('category').value,
+    thumb: pending?.thumb || ''
+  };
+  if (pending?.file) {
+    try {
+      setStatus('Saving to Google Drive…');
+      entry.driveId = await uploadToDrive(pending.file, `${entry.date}_${entry.place}.jpg`);
+    } catch {
+      setStatus('Drive upload failed. Saved on this phone only.');
+    }
+  }
+  expenses.push(entry); persist();
+  pending = null;
+  $('fileIn').value = ''; $('formWrap').hidden = true;
+  $('place').value = ''; $('amount').value = ''; $('preview').hidden = true;
+  setStatus('');
+  render();
+};
+
+/* ---------- Dashboard ---------- */
+function groupSum(arr, keyFn) {
+  const m = {};
+  arr.forEach(e => { const k = keyFn(e); m[k] = (m[k] || 0) + e.amount; });
+  return m;
+}
+function render() {
+  const month = $('monthPicker').value;
+  const list = expenses.filter(e => e.date.startsWith(month));
+  const total = list.reduce((s, e) => s + e.amount, 0);
+  $('total').textContent = CUR + total.toFixed(2);
+  $('count').textContent = list.length + ' receipts';
+
+  const byCat = groupSum(list, e => e.category);
+  const byPlace = groupSum(list, e => e.place);
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const places = Object.entries(byPlace).sort((a, b) => b[1] - a[1]);
+
+  if (cats.length) {
+    $('topCat').textContent = cats[0][0];
+    $('topCatAmt').textContent = `${CUR}${cats[0][1].toFixed(2)} (${Math.round(cats[0][1] / total * 100)}%)`;
+  } else { $('topCat').textContent = '–'; $('topCatAmt').textContent = ''; }
+  if (places.length) {
+    $('topPlace').textContent = places[0][0];
+    $('topPlaceAmt').textContent = `${CUR}${places[0][1].toFixed(2)} across ${list.filter(e => e.place === places[0][0]).length} visits`;
+  } else { $('topPlace').textContent = '–'; $('topPlaceAmt').textContent = ''; }
+
+  catChart?.destroy();
+  catChart = new Chart($('catChart'), {
+    type: 'doughnut',
+    data: { labels: cats.map(c => c[0]), datasets: [{ data: cats.map(c => c[1]), backgroundColor: COLORS }] },
+    options: { maintainAspectRatio: false, plugins: { title: { display: true, text: 'Spending by category' }, legend: { position: 'bottom' } } }
+  });
+  placeChart?.destroy();
+  placeChart = new Chart($('placeChart'), {
+    type: 'bar',
+    data: { labels: places.slice(0, 5).map(p => p[0]), datasets: [{ label: 'Spent', data: places.slice(0, 5).map(p => p[1]), backgroundColor: '#1a73e8' }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { title: { display: true, text: 'Top places' }, legend: { display: false } } }
+  });
+
+  const recent = [...expenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  $('list').innerHTML = recent.map(e => `
+    <li>
+      ${e.thumb ? `<img src="${e.thumb}" alt="">` : '<div style="width:44px"></div>'}
+      <div class="info"><strong>${esc(e.place)}</strong><small>${e.date}</small></div>
+      <select data-cat="${e.id}">${CAT_NAMES.map(c => `<option ${c === e.category ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <span class="amt">${CUR}${e.amount.toFixed(2)}</span>
+      <button class="ghost" data-del="${e.id}" aria-label="Delete">✕</button>
+    </li>`).join('') || '<li><small>No expenses yet. Add your first receipt above.</small></li>';
+}
+$('list').addEventListener('change', e => {
+  const id = e.target.dataset.cat;
+  if (!id) return;
+  expenses.find(x => x.id === id).category = e.target.value;
+  persist(); render();
+});
+$('list').addEventListener('click', e => {
+  const id = e.target.dataset.del;
+  if (!id || !confirm('Delete this expense?')) return;
+  expenses = expenses.filter(x => x.id !== id);
+  persist(); render();
+});
+$('monthPicker').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
