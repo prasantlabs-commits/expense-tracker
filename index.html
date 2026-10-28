@@ -13,8 +13,10 @@
   [hidden]{display:none!important}
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f6fa;color:#1d2433}
-  header{background:#1a73e8;color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 14px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5}
+  header{background:#1a73e8;color:#fff;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:0;z-index:5}
   header h1{font-size:1.2rem;margin:0}
+  .sub{font-size:.75rem;opacity:.9;margin-top:2px}
+  .hbtn{width:auto;background:#fff;color:#1a73e8;border:0;font-weight:600;white-space:nowrap}
   main{max-width:720px;margin:auto;padding:12px;display:grid;gap:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
   .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -22,33 +24,35 @@
   .big{font-size:1.5rem;font-weight:700}
   button,select,input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #ccd3e0;width:100%;background:#fff}
   button{cursor:pointer}
-  button.primary{background:#1a73e8;color:#fff;border:0;font-weight:600}
-  button.ghost{width:auto;border:0;background:none;color:#d93025;font-size:1.1rem;padding:4px}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  #monthPicker{width:auto;margin-bottom:12px}
   .upload{display:block;text-align:center;background:#1a73e8;color:#fff;padding:16px;border-radius:14px;font-weight:600;cursor:pointer}
   .upload input{display:none}
-  img.preview{width:100%;border-radius:10px;max-height:220px;object-fit:contain;margin-bottom:8px}
-  .status{font-size:.85rem;color:#667085;margin:8px 0 0}
+  .busy{margin-top:10px;color:#1a73e8;font-weight:600;text-align:center}
   .chart{position:relative;height:240px}
   ul{list-style:none;padding:0;margin:0}
   li{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #eef1f6}
   li img{width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0}
-  li .info{flex:1;min-width:0}
+  li .info{flex:1;min-width:0;cursor:pointer}
   li .info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   li .info small{color:#667085}
   li select{width:auto;padding:6px}
-  li .amt{font-weight:600;white-space:nowrap}
+  li .amt{font-weight:600;white-space:nowrap;cursor:pointer}
+  button.ghost{width:auto;border:0;background:none;color:#d93025;font-size:1.1rem;padding:4px}
+  .warn{background:#fbbc04;color:#1d2433;font-size:.7rem;padding:1px 6px;border-radius:6px;margin-left:4px;font-weight:600}
 </style>
 </head>
 <body>
 <header>
-  <h1>💷 Expense Tracker</h1>
-  <button id="driveBtn" style="width:auto;background:#fff;color:#1a73e8;border:0;font-weight:600">Connect Drive</button>
+  <div>
+    <h1>💷 Expense Tracker</h1>
+    <div class="sub" id="status">Starting…</div>
+  </div>
+  <button id="driveBtn" class="hbtn">Connect Drive</button>
 </header>
 
 <main>
   <div class="card">
-    <input type="month" id="monthPicker" style="width:auto;margin-bottom:12px">
+    <input type="month" id="monthPicker">
     <div class="cards">
       <div><div class="label">Total spent</div><div class="big" id="total">£0.00</div><div class="label" id="count"></div></div>
       <div><div class="label">Biggest category</div><div class="big" id="topCat">–</div><div class="label" id="topCatAmt"></div></div>
@@ -60,17 +64,7 @@
     <label class="upload">📷 Add receipt photo
       <input type="file" id="fileIn" accept="image/*" capture="environment">
     </label>
-    <div id="formWrap" hidden style="margin-top:12px">
-      <img id="preview" class="preview" alt="Receipt" hidden>
-      <input id="place" placeholder="Shop / place">
-      <div class="row">
-        <input id="date" type="date">
-        <input id="amount" type="number" step="0.01" placeholder="Amount">
-      </div>
-      <select id="category" style="margin-top:8px"></select>
-      <button id="saveBtn" class="primary" style="margin-top:10px">Save expense</button>
-      <p class="status" id="status"></p>
-    </div>
+    <div class="busy" id="busy" hidden></div>
   </div>
 
   <div class="card"><div class="chart"><canvas id="catChart"></canvas></div></div>
@@ -78,41 +72,290 @@
 
   <div class="card">
     <strong>Recent expenses</strong>
+    <div class="label" style="margin-top:2px">Tap a shop name or amount to edit it.</div>
     <ul id="list" style="margin-top:8px"></ul>
   </div>
 </main>
 
 <script>
-/* ===== CONFIG: paste your OAuth Client ID from Google Cloud ===== */
-const CLIENT_ID = '1082499645160-sqis1spcfbfmr5k3gpjh5tm47rucjoag.apps.googleusercontent.com';
-const CUR = '€';   // change to your currency symbol
+/* ===== CONFIG ===== */
+const CLIENT_ID = 'PASTE_YOUR_CLIENT_ID.apps.googleusercontent.com';
+const CUR = '£';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const FOLDER_NAME = 'Expense Receipts';
+const DATA_FILE = 'expenses.json';
 
 const CATEGORIES = {
-  Food: ['restaurant','cafe','coffee','pizza','burger','grocer','supermarket','tesco','lidl','aldi','sainsbury','morrisons','mcdonald','starbucks','greggs','bakery','kitchen'],
-  Transport: ['uber','bolt','taxi','train','rail','fuel','petrol','shell','bp','esso','parking','metro','bus'],
-  Shopping: ['amazon','store','mall','clothing','zara','h&m','primark','ikea','argos','boots'],
-  Bills: ['electric','water','gas','internet','broadband','mobile','insurance','council','rent'],
-  Health: ['pharmacy','chemist','clinic','doctor','dental','gym','optician'],
+  Food: ['restaurant','cafe','coffee','pizza','burger','grocer','supermarket','tesco','lidl','aldi','sainsbury','morrisons','mcdonald','starbucks','greggs','bakery','kitchen','asda','waitrose','co-op'],
+  Transport: ['uber','bolt','taxi','train','rail','fuel','petrol','shell','bp','esso','parking','metro','bus','tfl'],
+  Shopping: ['amazon','store','mall','clothing','zara','h&m','primark','ikea','argos','boots','next'],
+  Bills: ['electric','water','gas','internet','broadband','mobile','insurance','council','rent','vodafone','ee '],
+  Health: ['pharmacy','chemist','clinic','doctor','dental','gym','optician','superdrug'],
   Entertainment: ['cinema','netflix','spotify','steam','theatre','concert','cineworld'],
   Other: []
 };
 const CAT_NAMES = Object.keys(CATEGORIES);
 const COLORS = ['#1a73e8','#34a853','#fbbc04','#ea4335','#a142f4','#24c1e0','#ff6d01','#9aa0a6'];
+const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
 const today = new Date().toLocaleDateString('en-CA');
 
 let expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
-let pending = null;            // {file, thumb} for the receipt being added
-let accessToken = null, tokenClient = null, pendingAuth = null;
-let folderId = localStorage.getItem('folderId');
+let pendingFiles = [];      // receipt photos waiting to be uploaded to Drive
+let cloud = null;           // { token, folder, file } once connected
+let tokenClient = null;
+let tokenWait = null;       // shared promise while a token is being requested
 let catChart, placeChart;
 
-/* ---------- Helpers ---------- */
-function persist() {
+/* ---------- Status and local cache ---------- */
+function setStatus(msg) { $('status').textContent = msg; }
+function setBusy(msg) { $('busy').textContent = msg; $('busy').hidden = !msg; }
+function setDriveUI(connected) { $('driveBtn').textContent = connected ? 'Drive ✓' : 'Connect Drive'; }
+function saveLocal() {
   try { localStorage.setItem('expenses', JSON.stringify(expenses)); }
-  catch { alert('Phone storage is full. Receipts are still in Google Drive if connected.'); }
+  catch { setStatus('Phone storage is full. Connect Drive to keep your data safe.'); }
+}
+
+/* ---------- Google sign-in (token is kept in the browser) ---------- */
+function savedToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem('gtoken') || 'null');
+    if (t && t.exp > Date.now()) return t.token;
+  } catch {}
+  return null;
+}
+function initGoogle() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    callback: r => {
+      const w = tokenWait; tokenWait = null;
+      if (r.error) { w?.reject(r.error); setDriveUI(false); return; }
+      const lifetime = (Number(r.expires_in) || 3600) * 1000;
+      localStorage.setItem('gtoken', JSON.stringify({ token: r.access_token, exp: Date.now() + lifetime - 60000 }));
+      localStorage.setItem('connected', '1');
+      setDriveUI(true);
+      w?.resolve(r.access_token);
+    },
+    error_callback: err => {
+      const w = tokenWait; tokenWait = null;
+      w?.reject(err.type || 'error');
+      setDriveUI(false);
+    }
+  });
+  start();
+}
+function getToken(interactive) {
+  const saved = savedToken();
+  if (saved) return Promise.resolve(saved);
+  if (!tokenClient) return Promise.reject('Google sign-in is still loading');
+  if (tokenWait) return tokenWait.promise;
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  tokenWait = { promise, resolve, reject };
+  // prompt 'none' = silent reconnect; '' = may show the Google popup (needs a tap)
+  tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
+  return promise;
+}
+
+/* ---------- Google Drive ---------- */
+async function drive(url, token, opts = {}) {
+  const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error('Drive error ' + r.status);
+  return r;
+}
+async function ensureCloud(interactive) {
+  const token = await getToken(interactive);
+  if (cloud && cloud.token === token) return cloud;
+
+  let folder = localStorage.getItem('folderId');
+  if (!folder) {
+    const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const found = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, token)).json();
+    folder = found.files?.[0]?.id;
+    if (!folder) {
+      const created = await drive('https://www.googleapis.com/drive/v3/files?fields=id', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      folder = (await created.json()).id;
+    }
+    localStorage.setItem('folderId', folder);
+  }
+
+  const q2 = encodeURIComponent(`name='${DATA_FILE}' and '${folder}' in parents and trashed=false`);
+  const f = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q2}&fields=files(id)`, token)).json();
+  cloud = { token, folder, file: f.files?.[0]?.id || null };
+  return cloud;
+}
+async function pullFromDrive() {
+  const c = await ensureCloud(false);
+  if (!c.file) {
+    if (expenses.length) await pushToDrive();
+    return;
+  }
+  const data = await (await drive(`https://www.googleapis.com/drive/v3/files/${c.file}?alt=media`, c.token)).json();
+  expenses = Array.isArray(data) ? data : [];
+  saveLocal();
+}
+async function pushToDrive() {
+  const c = await ensureCloud(false);
+  const body = new Blob([JSON.stringify(expenses)], { type: 'application/json' });
+  if (c.file) {
+    await drive(`https://www.googleapis.com/upload/drive/v3/files/${c.file}?uploadType=media`, c.token, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: DATA_FILE, parents: [c.folder] })], { type: 'application/json' }));
+    form.append('file', body);
+    const created = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', c.token, { method: 'POST', body: form });
+    c.file = (await created.json()).id;
+  }
+}
+async function uploadReceipt(p) {
+  const c = await ensureCloud(false);
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ name: p.name, parents: [c.folder] })], { type: 'application/json' }));
+  form.append('file', p.file);
+  const r = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', c.token, { method: 'POST', body: form });
+  return (await r.json()).id;
+}
+async function flushPending() {
+  if (!pendingFiles.length) return;
+  let changed = false;
+  for (const p of [...pendingFiles]) {
+    try {
+      const id = await uploadReceipt(p);
+      const e = expenses.find(x => x.id === p.entryId);
+      if (e) e.driveId = id;
+      pendingFiles = pendingFiles.filter(x => x !== p);
+      changed = true;
+    } catch { break; }
+  }
+  if (changed) await save();
+}
+async function save() {
+  saveLocal();
+  render();
+  if (!localStorage.getItem('connected')) return setStatus('Saved on this phone. Connect Drive to sync.');
+  try {
+    await pushToDrive();
+    setStatus('Synced with Google Drive ✓');
+  } catch {
+    setStatus('Saved on this phone. Will sync when Drive reconnects.');
+  }
+}
+async function start() {
+  render();
+  if (!localStorage.getItem('connected')) return setStatus('Connect Drive to sync across your devices.');
+  setDriveUI(!!savedToken());
+  setStatus('Syncing with Google Drive…');
+  try {
+    await pullFromDrive();
+    await flushPending();
+    setDriveUI(true);
+    setStatus('Synced with Google Drive ✓');
+    render();
+  } catch {
+    setDriveUI(false);
+    setStatus('Tap Connect Drive to sync.');
+  }
+}
+$('driveBtn').onclick = async () => {
+  setStatus('Connecting to Google Drive…');
+  try {
+    await getToken(true);
+    localStorage.setItem('connected', '1');
+    await pullFromDrive();
+    await flushPending();
+    setDriveUI(true);
+    setStatus('Synced with Google Drive ✓');
+    render();
+  } catch {
+    setStatus('Could not connect to Google Drive. Try again.');
+  }
+};
+const gsiWait = setInterval(() => {
+  if (window.google?.accounts) { clearInterval(gsiWait); initGoogle(); }
+}, 300);
+
+/* ---------- Reading receipts (OCR) ---------- */
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function drawScaled(img, maxSide) {
+  const s = maxSide / Math.max(img.width, img.height);
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * s);
+  c.height = Math.round(img.height * s);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+function readText(img) {
+  // Upscale and boost contrast on grey scale so the text is easier to read
+  const c = drawScaled(img, 2000);
+  const ctx = c.getContext('2d');
+  const d = ctx.getImageData(0, 0, c.width, c.height);
+  for (let i = 0; i < d.data.length; i += 4) {
+    const g = d.data[i] * 0.3 + d.data[i + 1] * 0.59 + d.data[i + 2] * 0.11;
+    const v = Math.min(255, Math.max(0, (g - 128) * 1.6 + 128));
+    d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+  }
+  ctx.putImageData(d, 0, 0);
+  return Tesseract.recognize(c, 'eng').then(r => r.data.text);
+}
+function parseNumber(s) {
+  const v = s.replace(/\s/g, '');
+  const dec = v.slice(-3);
+  const whole = v.slice(0, -3).replace(/[.,]/g, '');
+  return parseFloat(whole + '.' + dec.slice(1));
+}
+function parseReceipt(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+
+  // Shop name: first line with real words that is not a header such as "receipt" or a phone number
+  const placeLine = lines.find(l => /[a-z]{3,}/i.test(l) && !/receipt|invoice|tel|vat|www|date|time|\d{5,}/i.test(l)) || '';
+  const place = placeLine.replace(/[^\w &'.-]/g, '').trim().slice(0, 40) || 'Unknown shop';
+
+  // Date: prefers yyyy-mm-dd, then dd/mm/yyyy (UK), then "28 Oct 2026"
+  let date = today, m;
+  if ((m = text.match(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/))) {
+    date = `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  } else if ((m = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    date = `${y}-${pad(m[2])}-${pad(m[1])}`;
+  } else if ((m = text.match(/\b(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s+(\d{4})\b/i)) && MONTHS[m[2].toLowerCase()]) {
+    date = `${m[3]}-${pad(MONTHS[m[2].toLowerCase()])}-${pad(m[1])}`;
+  }
+
+  // Amount: prefer the last line that says total / amount due / to pay
+  const amountOf = l => {
+    const all = [...l.matchAll(/\d{1,4}(?:[.,]\d{3})*[.,]\d{2}\b/g)].map(x => parseNumber(x[0]));
+    return all.length ? all[all.length - 1] : NaN;
+  };
+  const totalLines = lines.filter(l =>
+    /total|amount due|to pay|balance/i.test(l) && !/sub\s*-?total|change|tax|vat|savings?/i.test(l)
+  );
+  let amount = NaN;
+  for (const l of [...totalLines].reverse()) {
+    const v = amountOf(l);
+    if (!isNaN(v)) { amount = v; break; }
+  }
+  if (isNaN(amount)) {
+    const all = lines.map(amountOf).filter(v => !isNaN(v));
+    amount = all.length ? Math.max(...all) : 0;
+  }
+  return { place, date, amount };
 }
 function guessCategory(name) {
   const n = name.toLowerCase();
@@ -120,125 +363,55 @@ function guessCategory(name) {
     if (words.some(w => n.includes(w))) return cat;
   return 'Other';
 }
-function resizeImage(file, maxSize, quality) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, maxSize / Math.max(img.width, img.height));
-      const c = document.createElement('canvas');
-      c.width = img.width * s; c.height = img.height * s;
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      resolve(c.toDataURL('image/jpeg', quality));
-    };
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
-}
-function parseReceipt(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const place = lines[0] || '';
-  let date = today;
-  const d = text.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
-  if (d) date = `${d[3].length === 2 ? '20' + d[3] : d[3]}-${d[2].padStart(2,'0')}-${d[1].padStart(2,'0')}`;
-  const totalLine = lines.find(l => /total/i.test(l) && !/sub/i.test(l) && /\d+[.,]\d{2}/.test(l));
-  const nums = [...(totalLine || text).matchAll(/(\d+[.,]\d{2})/g)].map(m => parseFloat(m[1].replace(',', '.')));
-  return { place, date, amount: nums.length ? Math.max(...nums) : '' };
-}
-function setStatus(msg) { $('status').textContent = msg; }
 
-/* ---------- Google Drive ---------- */
-function initGoogle() {
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: 'https://www.googleapis.com/auth/drive.file',
-    callback: r => {
-      if (r.error) { pendingAuth?.reject(r.error); }
-      else { accessToken = r.access_token; $('driveBtn').textContent = 'Drive ✓'; pendingAuth?.resolve(accessToken); }
-      pendingAuth = null;
-    }
-  });
-}
-function getToken() {
-  return new Promise((resolve, reject) => {
-    if (accessToken) return resolve(accessToken);
-    pendingAuth = { resolve, reject };
-    tokenClient.requestAccessToken({ prompt: '' });
-  });
-}
-async function getFolder(token) {
-  if (folderId) return folderId;
-  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Expense Receipts', mimeType: 'application/vnd.google-apps.folder' })
-  });
-  folderId = (await r.json()).id;
-  localStorage.setItem('folderId', folderId);
-  return folderId;
-}
-async function uploadToDrive(file, name) {
-  const token = await getToken();
-  const folder = await getFolder(token);
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify({ name, parents: [folder] })], { type: 'application/json' }));
-  form.append('file', file);
-  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form
-  });
-  return (await r.json()).id;
-}
-$('driveBtn').onclick = () => getToken().catch(() => alert('Could not connect to Google Drive.'));
-const gsiWait = setInterval(() => { if (window.google?.accounts) { clearInterval(gsiWait); initGoogle(); } }, 300);
-
-/* ---------- Adding a receipt ---------- */
-$('category').innerHTML = CAT_NAMES.map(c => `<option>${c}</option>`).join('');
-$('date').value = today;
-$('monthPicker').value = today.slice(0, 7);
-
+/* ---------- Adding a receipt: fully automatic ---------- */
 $('fileIn').addEventListener('change', async e => {
   const file = e.target.files[0];
+  e.target.value = '';
   if (!file) return;
-  $('formWrap').hidden = false;
-  pending = { file, thumb: await resizeImage(file, 300, 0.6) };
-  $('preview').src = pending.thumb; $('preview').hidden = false;
-  setStatus('Reading receipt…');
+
+  setBusy('Reading receipt…');
+  let img = null, text = '', thumb = '';
   try {
-    const { data } = await Tesseract.recognize(file, 'eng');
-    const r = parseReceipt(data.text);
-    $('place').value = r.place; $('date').value = r.date; $('amount').value = r.amount;
-    $('category').value = guessCategory(r.place);
-    setStatus('Check the details, then save.');
+    img = await loadImage(file);
+    thumb = drawScaled(img, 300).toDataURL('image/jpeg', 0.6);
+    text = await readText(img);
   } catch {
-    setStatus('Could not read the receipt. Fill in the details manually.');
+    // Even if reading fails, the photo is still saved so you can edit it later
   }
+  const r = parseReceipt(text);
+  const id = Date.now().toString();
+  expenses.push({
+    id,
+    place: r.place,
+    date: r.date,
+    amount: r.amount,
+    category: guessCategory(r.place),
+    thumb,
+    needsReview: !text || !r.amount
+  });
+  pendingFiles.push({ entryId: id, file, name: `${r.date}_${r.place.replace(/[\\/]/g, '-')}.jpg` });
+
+  setBusy('');
+  await save();
+  await flushPending();
 });
 
-$('saveBtn').onclick = async () => {
-  const amount = parseFloat($('amount').value);
-  if (!amount) return setStatus('Enter an amount first.');
-  const entry = {
-    id: Date.now().toString(),
-    place: $('place').value.trim() || 'Unknown',
-    date: $('date').value || today,
-    amount,
-    category: $('category').value,
-    thumb: pending?.thumb || ''
-  };
-  if (pending?.file) {
-    try {
-      setStatus('Saving to Google Drive…');
-      entry.driveId = await uploadToDrive(pending.file, `${entry.date}_${entry.place}.jpg`);
-    } catch {
-      setStatus('Drive upload failed. Saved on this phone only.');
-    }
-  }
-  expenses.push(entry); persist();
-  pending = null;
-  $('fileIn').value = ''; $('formWrap').hidden = true;
-  $('place').value = ''; $('amount').value = ''; $('preview').hidden = true;
-  setStatus('');
-  render();
-};
+/* ---------- Editing ---------- */
+function editEntry(id) {
+  const e = expenses.find(x => x.id === id);
+  if (!e) return;
+  const place = prompt('Shop name', e.place);
+  if (place === null) return;
+  const amt = prompt(`Amount (${CUR})`, e.amount);
+  if (amt === null) return;
+  e.place = place.trim() || e.place;
+  const v = parseFloat(String(amt).replace(',', '.'));
+  if (!isNaN(v)) e.amount = v;
+  e.category = guessCategory(e.place);
+  e.needsReview = false;
+  save();
+}
 
 /* ---------- Dashboard ---------- */
 function groupSum(arr, keyFn) {
@@ -262,9 +435,11 @@ function render() {
     $('topCat').textContent = cats[0][0];
     $('topCatAmt').textContent = `${CUR}${cats[0][1].toFixed(2)} (${Math.round(cats[0][1] / total * 100)}%)`;
   } else { $('topCat').textContent = '–'; $('topCatAmt').textContent = ''; }
+
   if (places.length) {
     $('topPlace').textContent = places[0][0];
-    $('topPlaceAmt').textContent = `${CUR}${places[0][1].toFixed(2)} across ${list.filter(e => e.place === places[0][0]).length} visits`;
+    const visits = list.filter(e => e.place === places[0][0]).length;
+    $('topPlaceAmt').textContent = `${CUR}${places[0][1].toFixed(2)} across ${visits} visit${visits > 1 ? 's' : ''}`;
   } else { $('topPlace').textContent = '–'; $('topPlaceAmt').textContent = ''; }
 
   catChart?.destroy();
@@ -280,28 +455,36 @@ function render() {
     options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { title: { display: true, text: 'Top places' }, legend: { display: false } } }
   });
 
-  const recent = [...expenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  const recent = [...expenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
   $('list').innerHTML = recent.map(e => `
     <li>
       ${e.thumb ? `<img src="${e.thumb}" alt="">` : '<div style="width:44px"></div>'}
-      <div class="info"><strong>${esc(e.place)}</strong><small>${e.date}</small></div>
+      <div class="info" data-edit="${e.id}">
+        <strong>${esc(e.place)}${e.needsReview ? '<span class="warn">check</span>' : ''}</strong>
+        <small>${e.date}</small>
+      </div>
       <select data-cat="${e.id}">${CAT_NAMES.map(c => `<option ${c === e.category ? 'selected' : ''}>${c}</option>`).join('')}</select>
-      <span class="amt">${CUR}${e.amount.toFixed(2)}</span>
+      <span class="amt" data-edit="${e.id}">${CUR}${e.amount.toFixed(2)}</span>
       <button class="ghost" data-del="${e.id}" aria-label="Delete">✕</button>
-    </li>`).join('') || '<li><small>No expenses yet. Add your first receipt above.</small></li>';
+    </li>`).join('') || '<li><small>No expenses yet. Take a photo of a receipt to add one.</small></li>';
 }
 $('list').addEventListener('change', e => {
   const id = e.target.dataset.cat;
   if (!id) return;
-  expenses.find(x => x.id === id).category = e.target.value;
-  persist(); render();
+  const item = expenses.find(x => x.id === id);
+  if (item) { item.category = e.target.value; save(); }
 });
 $('list').addEventListener('click', e => {
-  const id = e.target.dataset.del;
-  if (!id || !confirm('Delete this expense?')) return;
-  expenses = expenses.filter(x => x.id !== id);
-  persist(); render();
+  const editId = e.target.closest('[data-edit]')?.dataset.edit;
+  if (editId) return editEntry(editId);
+  const delId = e.target.dataset.del;
+  if (delId && confirm('Remove this expense from the app? The receipt photo stays in your Drive folder.')) {
+    expenses = expenses.filter(x => x.id !== delId);
+    save();
+  }
 });
+
+$('monthPicker').value = today.slice(0, 7);
 $('monthPicker').addEventListener('change', render);
 render();
 </script>
