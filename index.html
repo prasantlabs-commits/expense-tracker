@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a73e8">
+<title>Expense Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  [hidden]{display:none!important}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f6fa;color:#1d2433}
+  header{background:#1a73e8;color:#fff;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:0;z-index:5}
+  header h1{font-size:1.2rem;margin:0}
+  .sub{font-size:.75rem;opacity:.9;margin-top:2px}
+  .hbtn{width:auto;background:#fff;color:#1a73e8;border:0;font-weight:600;white-space:nowrap}
+  main{max-width:720px;margin:auto;padding:12px;display:grid;gap:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .label{font-size:.8rem;color:#667085}
+  button,select,input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #ccd3e0;width:100%;background:#fff}
+  button{cursor:pointer}
+  #monthPicker{width:auto;margin-bottom:12px}
+  .head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}
+  .budget{display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:12px}
+  progress{width:100%;height:14px;accent-color:#1a73e8}
+  progress.over{accent-color:#d93025}
+  .bl{font-size:.85rem;margin-top:4px}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tile{background:#f4f6fa;border-radius:10px;padding:10px}
+  .tile.wide{grid-column:span 2}
+  .tile .val{font-size:1.15rem;font-weight:700;margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile .big{font-size:1.5rem}
+  .up{color:#d93025}.down{color:#188038}
+  .actions{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+  .scanbtn{background:#1a73e8;color:#fff;border:0;font-weight:600;padding:16px}
+  .hint{font-size:.8rem;color:#667085;margin-top:10px;text-align:center}
+  .chart{position:relative;height:240px}
+  .ctitle{font-weight:600;margin-bottom:8px}
+  ul{list-style:none;padding:0;margin:0}
+  li{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #eef1f6}
+  li .icon{width:44px;height:44px;border-radius:8px;background:#eef3fd;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.3rem}
+  li .info{flex:1;min-width:0;cursor:pointer}
+  li .info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  li .info small{color:#667085}
+  li select{width:auto;padding:6px}
+  li .amt{font-weight:600;white-space:nowrap;cursor:pointer}
+  button.ghost{width:auto;border:0;background:none;color:#d93025;font-size:1.1rem;padding:4px}
+  .progcard{display:grid;gap:4px}
+  .progcard progress{height:12px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>💶 Expense Tracker</h1>
+    <div class="sub" id="status">Starting…</div>
+  </div>
+  <button id="driveBtn" class="hbtn">Connect Drive</button>
+</header>
+
+<main>
+  <div class="card">
+    <div class="head">
+      <input type="month" id="monthPicker">
+      <span class="label" id="monthNote"></span>
+    </div>
+    <div class="budget">
+      <input id="budgetIn" type="number" inputmode="decimal" placeholder="Set a monthly budget (€)">
+      <progress id="budgetBar" max="100" value="0"></progress>
+      <div class="bl" id="budgetText"></div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </div>
+
+  <div class="card">
+    <div class="actions">
+      <button id="scanBtn" class="scanbtn">📷 Scan receipt</button>
+      <button id="checkBtn">↻ Check</button>
+    </div>
+    <div class="hint">Scan opens your Expense Receipts folder. Tap <b>+ → Scan</b>, save it, then press <b>Back</b> to return here. The expense is added automatically.</div>
+  </div>
+
+  <div class="card progcard" id="progCard" hidden>
+    <strong id="progTitle">Adding receipts…</strong>
+    <progress id="prog" max="100" value="0"></progress>
+    <div class="label" id="progText"></div>
+  </div>
+
+  <div class="card"><div class="ctitle">Spending by category</div><div class="chart"><canvas id="catChart"></canvas></div></div>
+  <div class="card"><div class="ctitle">Daily spending</div><div class="chart"><canvas id="dailyChart"></canvas></div></div>
+  <div class="card"><div class="ctitle">Top places</div><div class="chart"><canvas id="placeChart"></canvas></div></div>
+  <div class="card"><div class="ctitle">Last 6 months</div><div class="chart"><canvas id="trendChart"></canvas></div></div>
+  <div class="card"><div class="ctitle">Spending by day of the week</div><div class="chart"><canvas id="weekdayChart"></canvas></div></div>
+
+  <div class="card">
+    <strong>Recent expenses</strong>
+    <div class="label" style="margin-top:2px">Tap a shop name or amount to edit it.</div>
+    <ul id="list" style="margin-top:8px"></ul>
+  </div>
+</main>
+
+<script>
+/* ===== CONFIG ===== */
+const CLIENT_ID = 'PASTE_YOUR_CLIENT_ID.apps.googleusercontent.com';
+const CUR = '€';
+const SCOPE = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
+const FOLDER_NAME = 'Expense Receipts';
+const DATA_FILE = 'expenses.json';
+const EST_SECONDS = 15;
+
+const CATEGORIES = {
+  Food: ['restaurant','cafe','coffee','pizza','burger','grocer','supermarket','tesco','lidl','aldi','sainsbury','morrisons','mcdonald','starbucks','greggs','bakery','kitchen','asda','waitrose','co-op','spar','dunnes','supervalu','carrefour','rewe','edeka','esselunga','mercadona','albert heijn'],
+  Transport: ['uber','bolt','taxi','train','rail','fuel','petrol','shell','bp','esso','parking','metro','bus','tfl','ryanair','aer lingus','lufthansa','trenitalia'],
+  Shopping: ['amazon','store','mall','clothing','zara','h&m','primark','ikea','argos','boots','next'],
+  Bills: ['electric','water','gas','internet','broadband','mobile','insurance','council','rent','vodafone','eir'],
+  Health: ['pharmacy','chemist','clinic','doctor','dental','gym','optician','superdrug'],
+  Entertainment: ['cinema','netflix','spotify','steam','theatre','concert','cineworld'],
+  Other: []
+};
+const CAT_NAMES = Object.keys(CATEGORIES);
+const COLORS = ['#1a73e8','#34a853','#fbbc04','#ea4335','#a142f4','#24c1e0','#ff6d01','#9aa0a6'];
+const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+const WEEK = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const money = n => CUR + (Number(n) || 0).toFixed(2);
+const today = new Date().toLocaleDateString('en-CA');
+
+let expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+let processed = JSON.parse(localStorage.getItem('processed') || '[]');
+let budget = Number(localStorage.getItem('budget') || 0);
+let cloudCache = null, tokenClient = null, tokenWait = null;
+let busy = false;
+const charts = {};
+
+/* ---------- Status and local cache ---------- */
+function setStatus(msg) { $('status').textContent = msg; }
+function setDriveUI(c) { $('driveBtn').textContent = c ? 'Drive ✓' : 'Connect Drive'; }
+function isConnected() { return !!localStorage.getItem('connected2'); }
+function saveLocal() {
+  try {
+    localStorage.setItem('expenses', JSON.stringify(expenses));
+    localStorage.setItem('processed', JSON.stringify(processed));
+    localStorage.setItem('budget', String(budget));
+  } catch { setStatus('Phone storage is full. Connect Drive to keep your data safe.'); }
+}
+
+/* ---------- Google sign-in ---------- */
+function savedToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem('gtoken2') || 'null');
+    if (t && t.exp > Date.now()) return t.token;
+  } catch {}
+  return null;
+}
+function initGoogle() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    callback: r => {
+      const w = tokenWait; tokenWait = null;
+      if (r.error) { w?.reject(r.error); setDriveUI(false); return; }
+      const life = (Number(r.expires_in) || 3600) * 1000;
+      localStorage.setItem('gtoken2', JSON.stringify({ token: r.access_token, exp: Date.now() + life - 60000 }));
+      localStorage.setItem('connected2', '1');
+      setDriveUI(true);
+      w?.resolve(r.access_token);
+    },
+    error_callback: err => {
+      const w = tokenWait; tokenWait = null;
+      w?.reject(err.type || 'error');
+      setDriveUI(false);
+    }
+  });
+  start();
+}
+function getToken(interactive) {
+  const saved = savedToken();
+  if (saved) return Promise.resolve(saved);
+  if (!tokenClient) return Promise.reject('Google sign-in is still loading');
+  if (tokenWait) return tokenWait.promise;
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  tokenWait = { promise, resolve, reject };
+  tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
+  return promise;
+}
+
+/* ---------- Google Drive helpers ---------- */
+async function drive(url, token, opts = {}) {
+  const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error('Drive error ' + r.status);
+  return r;
+}
+async function ensureCloud(interactive) {
+  const token = await getToken(interactive);
+  if (cloudCache && cloudCache.token === token) return cloudCache;
+  let folder = localStorage.getItem('folderId');
+  if (!folder) {
+    const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const found = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, token)).json();
+    folder = found.files?.[0]?.id;
+    if (!folder) {
+      const created = await drive('https://www.googleapis.com/drive/v3/files?fields=id', token, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      folder = (await created.json()).id;
+    }
+    localStorage.setItem('folderId', folder);
+  }
+  const q2 = encodeURIComponent(`name='${DATA_FILE}' and '${folder}' in parents and trashed=false`);
+  const f = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q2}&fields=files(id)`, token)).json();
+  cloudCache = { token, folder, file: f.files?.[0]?.id || null };
+  return cloudCache;
+}
+
+/* ---------- Syncing expenses.json between devices ---------- */
+async function loadCloud() {
+  const c = await ensureCloud(false);
+  if (!c.file) return;
+  const d = await (await drive(`https://www.googleapis.com/drive/v3/files/${c.file}?alt=media`, c.token)).json();
+  const remote = Array.isArray(d) ? d : (d.expenses || []);
+  const remoteProcessed = Array.isArray(d) ? [] : (d.processed || []);
+  const map = new Map();
+  [...remote, ...expenses].forEach(e => map.set(e.id, e));
+  expenses = [...map.values()];
+  processed = [...new Set([...remoteProcessed, ...processed])];
+  if (!Array.isArray(d) && d.budget) budget = Number(d.budget) || budget;
+  saveLocal();
+}
+async function saveCloud() {
+  const c = await ensureCloud(false);
+  const body = new Blob([JSON.stringify({ expenses, processed, budget })], { type: 'application/json' });
+  if (c.file) {
+    await drive(`https://www.googleapis.com/upload/drive/v3/files/${c.file}?uploadType=media`, c.token, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: DATA_FILE, parents: [c.folder] })], { type: 'application/json' }));
+    form.append('file', body);
+    const created = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', c.token, { method: 'POST', body: form });
+    c.file = (await created.json()).id;
+  }
+}
+async function save() {
+  saveLocal();
+  render();
+  if (!isConnected()) return setStatus('Saved on this phone. Connect Drive to sync.');
+  try { await saveCloud(); setStatus('Synced with Google Drive ✓'); }
+  catch { setStatus('Saved on this phone. Will sync when Drive reconnects.'); }
+}
+
+/* ---------- Reading scans from the Drive folder ---------- */
+async function ocrFile(c, fileId) {
+  const copy = await (await drive(
+    `https://www.googleapis.com/drive/v3/files/${fileId}/copy?ocr=true&fields=id`,
+    c.token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'ocr-temp', mimeType: 'application/vnd.google-apps.document', parents: [c.folder] })
+    }
+  )).json();
+  try {
+    return await (await drive(`https://www.googleapis.com/drive/v3/files/${copy.id}/export?mimeType=text/plain`, c.token)).text();
+  } finally {
+    await drive(`https://www.googleapis.com/drive/v3/files/${copy.id}`, c.token, { method: 'DELETE' }).catch(() => {});
+  }
+}
+function showProgress(show) { $('progCard').hidden = !show; }
+function fmtTime(sec) {
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} seconds`;
+  return `${Math.ceil(sec / 60)} min`;
+}
+function updateProgress(done, total, name, times) {
+  const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : EST_SECONDS;
+  const left = (total - done) * avg;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  $('prog').value = pct;
+  $('progTitle').textContent = done >= total ? 'All receipts added ✓' : `Reading receipt ${Math.min(done + 1, total)} of ${total}`;
+  $('progText').textContent = done >= total
+    ? `${total} receipt${total > 1 ? 's' : ''} processed.`
+    : `${pct}% complete · ${name ? 'Reading ' + name + ' · ' : ''}about ${fmtTime(left)} left`;
+}
+async function checkScans() {
+  if (busy) return;
+  if (!isConnected()) return setStatus('Connect Drive to pick up new scans.');
+  busy = true;
+  try {
+    const c = await ensureCloud(false);
+    const q = encodeURIComponent(`'${c.folder}' in parents and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`);
+    const list = await (await drive(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=200&orderBy=createdTime`, c.token)).json();
+
+    // New scans, plus earlier entries whose total was not found yet
+    const jobs = [
+      ...(list.files || []).filter(f => !processed.includes(f.id)).map(f => ({ kind: 'new', id: f.id, name: f.name })),
+      ...expenses.filter(e => e.needsReview && e.sourceId && (e.tries || 0) < 3).map(e => ({ kind: 'retry', id: e.sourceId, name: e.place, entry: e }))
+    ];
+    if (!jobs.length) { setStatus('Synced with Google Drive ✓'); return; }
+
+    showProgress(true);
+    const times = [];
+    let done = 0;
+    updateProgress(0, jobs.length, jobs[0].name, times);
+    for (const job of jobs) {
+      const t0 = Date.now();
+      updateProgress(done, jobs.length, job.name, times);
+      try {
+        const text = await ocrFile(c, job.id);
+        const r = parseReceipt(text);
+        if (job.kind === 'new') {
+          expenses.push({
+            id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+            place: r.place,
+            date: r.date,
+            amount: r.amount ?? 0,
+            category: guessCategory(r.place),
+            sourceId: job.id,
+            sourceName: job.name,
+            needsReview: r.amount === null,
+            tries: r.amount === null ? 1 : 0
+          });
+          processed.push(job.id);
+        } else {
+          const e = job.entry;
+          if (r.amount !== null) { e.amount = r.amount; e.needsReview = false; }
+          if (e.place === 'Unknown shop' && r.place !== 'Unknown shop') { e.place = r.place; e.category = guessCategory(r.place); }
+          e.tries = (e.tries || 0) + 1;
+        }
+        saveLocal();
+      } catch {
+        // Left as it is so it is tried again next time
+      }
+      times.push((Date.now() - t0) / 1000);
+      done++;
+      updateProgress(done, jobs.length, '', times);
+    }
+    await save();
+    setTimeout(() => showProgress(false), 2500);
+    setStatus('Synced with Google Drive ✓');
+  } catch {
+    showProgress(false);
+    setStatus('Could not read new scans. Tap Check to try again.');
+  } finally {
+    busy = false;
+  }
+}
+async function start() {
+  render();
+  if (!isConnected()) return setStatus('Connect Drive to sync across your devices.');
+  setDriveUI(!!savedToken());
+  setStatus('Syncing with Google Drive…');
+  try {
+    await loadCloud();
+    setDriveUI(true);
+    render();
+    await checkScans();
+  } catch {
+    setDriveUI(false);
+    setStatus('Tap Connect Drive to sync.');
+  }
+}
+$('driveBtn').onclick = async () => {
+  setStatus('Connecting to Google Drive…');
+  try {
+    await getToken(true);
+    localStorage.setItem('connected2', '1');
+    setDriveUI(true);
+    await loadCloud();
+    render();
+    await checkScans();
+  } catch { setStatus('Could not connect to Google Drive. Try again.'); }
+};
+$('checkBtn').onclick = () => checkScans();
+$('scanBtn').onclick = () => {
+  const folder = localStorage.getItem('folderId');
+  location.href = folder ? `https://drive.google.com/drive/folders/${folder}` : 'https://drive.google.com/drive/my-drive';
+};
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && isConnected()) checkScans();
+});
+window.addEventListener('pageshow', () => {
+  if (isConnected()) checkScans();
+});
+const gsiWait = setInterval(() => {
+  if (window.google?.accounts) { clearInterval(gsiWait); initGoogle(); }
+}, 300);
+
+/* ---------- Pulling the details out of the text ---------- */
+// Words that label the final amount to pay, in English, German, Italian, French, Dutch and Spanish
+const TOTAL_RE = /\b(total|gesamt\w*|summe|totale|totaal|montant|importo|betrag|total\w*|to pay|amount due|balance due|te betalen|zu zahlen|a pagar|total eur)\b/i;
+// Lines that look like totals but are not the final amount
+const EXCLUDE_RE = /sub\s*-?\s*total|zwischensumme|change|wechselgeld|tendered|rabatt|discount|saving|items?\b|qty|points|rückgeld/i;
+const MONEY = /\d{1,3}(?:[.,\s]\d{3})*[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g;
+const DATE_RE = /\b\d{1,4}[-\/.]\d{1,2}[-\/.]\d{1,4}\b/g;
+const SHOP_SKIP = /receipt|invoice|rechnung|scontrino|ticket|tel|phone|vat|mwst|iva|www|http|@|date|time|\d{5,}|kassen|cashier|thank|welcome|street|strasse|road|avenue/i;
+
+// Fixes common OCR mix-ups such as the letter O in place of zero in amounts
+function cleanText(t) {
+  return t
+    .replace(/(\d)[oO](?=[.,]\d)/g, '$10')
+    .replace(/(^|[\s€])[oO](?=[.,]\d{2}\b)/g, '$10');
+}
+// "65,00", "65.00" and "1.234,50" all become numbers
+function toAmount(s) {
+  const clean = s.replace(/\s/g, '');
+  const m = clean.match(/^(.*)[.,](\d{2})$/);
+  if (!m) return NaN;
+  return parseInt(m[1].replace(/[.,]/g, '') || '0', 10) + parseInt(m[2], 10) / 100;
+}
+// Amounts on one line, ignoring dates so "28.10" is not read as money
+function amountsIn(line) {
+  return [...line.replace(DATE_RE, ' ').matchAll(MONEY)]
+    .map(m => toAmount(m[0]))
+    .filter(n => !isNaN(n) && n > 0 && n < 100000);
+}
+// Finds the final total. A label and its amount may sit on neighbouring lines, so look ahead a little.
+// Where several labelled totals exist (e.g. "Total" and "Total incl. VAT"), the largest is the final one.
+// If no label is found at all, the largest amount on the receipt is used as a best guess.
+function findTotal(lines) {
+  const found = [];
+  lines.forEach((l, i) => {
+    if (!TOTAL_RE.test(l) || EXCLUDE_RE.test(l)) return;
+    let a = amountsIn(l);
+    for (let j = i + 1; !a.length && j <= i + 2 && j < lines.length; j++) {
+      if (TOTAL_RE.test(lines[j]) || EXCLUDE_RE.test(lines[j])) break;
+      a = amountsIn(lines[j]);
+    }
+    if (a.length) found.push(Math.max(...a));
+  });
+  if (found.length) return Math.max(...found);
+  const all = lines.flatMap(amountsIn);
+  return all.length ? Math.max(...all) : null;
+}
+function findDate(text) {
+  let m;
+  if ((m = text.match(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/))) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  if ((m = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return `${y}-${pad(m[2])}-${pad(m[1])}`;
+  }
+  if ((m = text.match(/\b(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s+(\d{4})\b/i)) && MONTHS[m[2].toLowerCase()])
+    return `${m[3]}-${pad(MONTHS[m[2].toLowerCase()])}-${pad(m[1])}`;
+  return null;
+}
+// The shop name is normally the first real line at the top of the receipt
+function findShop(lines) {
+  for (const l of lines.slice(0, 8)) {
+    if (/[a-z]{3,}/i.test(l) && !SHOP_SKIP.test(l) && !MONEY.test(l)) {
+      MONEY.lastIndex = 0;
+      const s = l.replace(/[^\p{L}\p{N} &'.-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (s.length >= 3) return s;
+    }
+    MONEY.lastIndex = 0;
+  }
+  return '';
+}
+function parseReceipt(rawText) {
+  const text = cleanText(rawText);
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+  return {
+    place: findShop(lines) || 'Unknown shop',
+    date: findDate(text) || today,
+    amount: findTotal(lines)
+  };
+}
+function guessCategory(name) {
+  const n = name.toLowerCase();
+  for (const [cat, words] of Object.entries(CATEGORIES))
+    if (words.some(w => n.includes(w))) return cat;
+  return 'Other';
+}
+
+/* ---------- Editing saved items ---------- */
+function editEntry(id) {
+  const e = expenses.find(x => x.id === id);
+  if (!e) return;
+  const place = prompt('Shop name', e.place);
+  if (place === null) return;
+  const amt = prompt(`Total (${CUR})`, e.amount);
+  if (amt === null) return;
+  e.place = place.trim() || e.place;
+  const v = parseFloat(String(amt).replace(',', '.'));
+  if (!isNaN(v)) { e.amount = v; e.needsReview = false; }
+  e.category = guessCategory(e.place);
+  save();
+}
+
+/* ---------- Date helpers ---------- */
+function shiftMonth(ym, n) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+const sumOf = arr => arr.reduce((s, e) => s + e.amount, 0);
+const groupSum = (arr, fn) => arr.reduce((m, e) => { const k = fn(e); m[k] = (m[k] || 0) + e.amount; return m; }, {});
+const groupCount = (arr, fn) => arr.reduce((m, e) => { const k = fn(e); m[k] = (m[k] || 0) + 1; return m; }, {});
+
+/* ---------- Dashboard ---------- */
+function mkChart(id, cfg) {
+  charts[id]?.destroy();
+  charts[id] = new Chart($(id), cfg);
+}
+function render() {
+  const ym = $('monthPicker').value;
+  const [y, mo] = ym.split('-').map(Number);
+  const dim = new Date(y, mo, 0).getDate();
+  const isCurrent = ym === today.slice(0, 7);
+  const dayNow = isCurrent ? new Date().getDate() : dim;
+  const list = expenses.filter(e => e.date.startsWith(ym));
+  const total = sumOf(list);
+  const prevYm = shiftMonth(ym, -1);
+  const prevList = expenses.filter(e => e.date.startsWith(prevYm));
+  const prevTotal = sumOf(prevList);
+  const count = list.length;
+
+  $('monthNote').textContent = isCurrent ? `Day ${dayNow} of ${dim}` : '';
+  $('budgetIn').value = budget || '';
+  const bar = $('budgetBar');
+  if (budget > 0) {
+    const pct = total / budget * 100;
+    bar.value = Math.min(100, pct);
+    bar.classList.toggle('over', pct > 100);
+    $('budgetText').textContent = pct > 100
+      ? `Over budget by ${money(total - budget)} (${Math.round(pct)}% used)`
+      : `${money(budget - total)} left of ${money(budget)} (${Math.round(pct)}% used)`;
+  } else {
+    bar.value = 0; bar.classList.remove('over');
+    $('budgetText').textContent = 'Set a budget above to track it here.';
+  }
+
+  const byCat = groupSum(list, e => e.category);
+  const prevByCat = groupSum(prevList, e => e.category);
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const places = Object.entries(groupSum(list, e => e.place)).sort((a, b) => b[1] - a[1]);
+  const visits = Object.entries(groupCount(list, e => e.place)).sort((a, b) => b[1] - a[1]);
+  const weekday = [0, 0, 0, 0, 0, 0, 0];
+  list.forEach(e => { const d = new Date(e.date + 'T00:00:00').getDay(); weekday[(d + 6) % 7] += e.amount; });
+  const busiestDay = weekday.indexOf(Math.max(...weekday));
+  const largest = list.reduce((a, e) => (!a || e.amount > a.amount ? e : a), null);
+  const knownBefore = new Set(expenses.filter(e => e.date < ym + '-01').map(e => e.place));
+  const newShops = new Set(list.filter(e => !knownBefore.has(e.place)).map(e => e.place)).size;
+  const ytd = sumOf(expenses.filter(e => e.date.slice(0, 4) === ym.slice(0, 4) && e.date.slice(0, 7) <= ym));
+  const notFound = expenses.filter(e => e.needsReview).length;
+
+  const change = prevTotal ? Math.round((total - prevTotal) / prevTotal * 100) : null;
+  const changeTxt = change === null
+    ? '–'
+    : `<span class="${change > 0 ? 'up' : 'down'}">${change > 0 ? '▲' : '▼'} ${Math.abs(change)}%</span>`;
+  let mover = null;
+  for (const c of CAT_NAMES) {
+    const d = (byCat[c] || 0) - (prevByCat[c] || 0);
+    if (!mover || Math.abs(d) > Math.abs(mover.d)) mover = { c, d };
+  }
+  const moverTxt = mover && mover.d !== 0
+    ? `${mover.c} <span class="${mover.d > 0 ? 'up' : 'down'}">${mover.d > 0 ? '+' : '−'}${money(Math.abs(mover.d))}</span>`
+    : '–';
+
+  const dailyAvg = dayNow ? total / dayNow : 0;
+  const projected = isCurrent ? dailyAvg * dim : null;
+  const avgPer = count ? total / count : 0;
+  const trips = dayNow ? count / dayNow * 7 : 0;
+
+  const tile = (label, val, cls = '', wide = false) =>
+    `<div class="tile${wide ? ' wide' : ''}"><div class="label">${label}</div><div class="val ${cls}">${val}</div></div>`;
+
+  $('kpis').innerHTML = [
+    tile('Total spent', money(total), 'big', true),
+    tile('Receipts', count),
+    tile('Average per receipt', money(avgPer)),
+    tile('Daily average', money(dailyAvg)),
+    tile('Projected month end', projected === null ? '–' : money(projected)),
+    tile('Versus last month', `${changeTxt} <span class="label">${money(prevTotal)} before</span>`),
+    tile('Biggest category', cats[0] ? `${cats[0][0]} ${Math.round(cats[0][1] / total * 100)}%` : '–'),
+    tile('Biggest mover', moverTxt),
+    tile('Top place', places[0] ? esc(places[0][0]) : '–', '', true),
+    tile('Largest expense', largest ? `${money(largest.amount)} · ${esc(largest.place)}` : '–', '', true),
+    tile('Most frequent shop', visits[0] ? `${esc(visits[0][0])} (${visits[0][1]}×)` : '–'),
+    tile('Busiest day', weekday[busiestDay] > 0 ? WEEK[busiestDay] : '–'),
+    tile('Trips per week', dayNow ? trips.toFixed(1) : '–'),
+    tile('New shops this month', newShops),
+    tile('Year to date', money(ytd)),
+    tile('Totals not found', notFound, notFound ? 'up' : '')
+  ].join('');
+
+  mkChart('catChart', {
+    type: 'doughnut',
+    data: { labels: cats.map(c => c[0]), datasets: [{ data: cats.map(c => c[1]), backgroundColor: COLORS }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  });
+
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+  const perDay = days.map(d => list.filter(e => Number(e.date.slice(8, 10)) === d).reduce((s, e) => s + e.amount, 0));
+  mkChart('dailyChart', {
+    type: 'line',
+    data: { labels: days, datasets: [{ label: 'Spent', data: perDay, borderColor: '#1a73e8', backgroundColor: 'rgba(26,115,232,.15)', fill: true, tension: .3, pointRadius: 2 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  mkChart('placeChart', {
+    type: 'bar',
+    data: { labels: places.slice(0, 5).map(p => p[0]), datasets: [{ label: 'Spent', data: places.slice(0, 5).map(p => p[1]), backgroundColor: '#1a73e8' }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  });
+
+  const months = [-5, -4, -3, -2, -1, 0].map(n => shiftMonth(ym, n));
+  mkChart('trendChart', {
+    type: 'bar',
+    data: { labels: months, datasets: [{ label: 'Spent', data: months.map(m => sumOf(expenses.filter(e => e.date.startsWith(m)))), backgroundColor: months.map(m => m === ym ? '#1a73e8' : '#c6d9fb') }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  mkChart('weekdayChart', {
+    type: 'bar',
+    data: { labels: WEEK, datasets: [{ label: 'Spent', data: weekday, backgroundColor: '#34a853' }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  const recent = [...expenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
+  $('list').innerHTML = recent.map(e => `
+    <li>
+      <div class="icon">📄</div>
+      <div class="info" data-edit="${e.id}">
+        <strong>${esc(e.place)}</strong>
+        <small>${e.date}</small>
+      </div>
+      <select data-cat="${e.id}">${CAT_NAMES.map(c => `<option ${c === e.category ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <span class="amt" data-edit="${e.id}">${money(e.amount)}</span>
+      <button class="ghost" data-del="${e.id}" aria-label="Delete">✕</button>
+    </li>`).join('') || '<li><small>No expenses yet. Tap Scan receipt to add one.</small></li>';
+}
+
+$('budgetIn').addEventListener('change', e => {
+  budget = parseFloat(String(e.target.value).replace(',', '.')) || 0;
+  save();
+});
+$('list').addEventListener('change', e => {
+  const id = e.target.dataset.cat;
+  if (!id) return;
+  const item = expenses.find(x => x.id === id);
+  if (item) { item.category = e.target.value; save(); }
+});
+$('list').addEventListener('click', e => {
+  const editId = e.target.closest('[data-edit]')?.dataset.edit;
+  if (editId) return editEntry(editId);
+  const delId = e.target.dataset.del;
+  if (delId && confirm('Remove this expense from the app? The scan stays in your Drive folder.')) {
+    expenses = expenses.filter(x => x.id !== delId);
+    save();
+  }
+});
+
+$('monthPicker').value = today.slice(0, 7);
+$('monthPicker').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
